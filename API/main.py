@@ -180,14 +180,24 @@ def append_log_to_hdfs(log):
 @app.on_event("startup")
 async def on_startup():
     global producer
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Tables PostgreSQL prêtes")
-    producer = KafkaProducer(
-        bootstrap_servers=kafka_bootstrap_servers,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8')
-    )
-    logger.info(f"Producer Kafka initialisé sur {kafka_bootstrap_servers}")
+    # Ajout d'un utilisateur de test si aucun utilisateur n'existe
+    users = read_users_from_hdfs()
+    if not users:
+        users.append({
+            "username": "testuser",
+            "full_name": "Test User",
+            "hashed_password": get_password_hash("testpass")
+        })
+        write_users_to_hdfs(users)
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers=kafka_bootstrap_servers,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
+        logger.info(f"Producer Kafka initialisé sur {kafka_bootstrap_servers}")
+    except Exception as e:
+        producer = None
+        logger.warning(f"Kafka non disponible ({e}), le producer ne sera pas utilisé.")
 
 def send_product_to_kafka(product_data):
     if producer:
