@@ -7,10 +7,12 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   ScrollView,
+  Button,
 } from 'react-native';
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
 import { commonStyles } from '../styles';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function HomeScreen({ navigation, route }) {
   const code = route?.params?.code;
@@ -37,6 +39,11 @@ export default function HomeScreen({ navigation, route }) {
 
     fetchProduct();
   }, [code]);
+
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem('token');
+    navigation.replace('Login');
+  };
 
   return (
     <ScrollView
@@ -116,6 +123,8 @@ export default function HomeScreen({ navigation, route }) {
           <Text>Similarité : {(product.recommendation.similarity * 100).toFixed(1)}%</Text>
         </View>
       )}
+
+      <Button title="Se déconnecter" onPress={handleLogout} />
     </ScrollView>
   );
 }

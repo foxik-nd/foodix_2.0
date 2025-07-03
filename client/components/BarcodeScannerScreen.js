@@ -2,6 +2,7 @@ import { useCameraPermissions, CameraView } from 'expo-camera';
 import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { commonStyles } from '../styles';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function BarcodeScannerScreen({ navigation, route }) {
   const [permission, requestPermission] = useCameraPermissions();
@@ -43,6 +44,16 @@ export default function BarcodeScannerScreen({ navigation, route }) {
         });
       }
     }, 500);
+  };
+
+  const fetchProduct = async (barcode) => {
+    const token = await AsyncStorage.getItem('token');
+    const response = await fetch(`http://localhost:8000/product/${barcode}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    return response.json();
   };
 
   if (!permission) return <View />;

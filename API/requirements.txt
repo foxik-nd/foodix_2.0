@@ -1,4 +1,4 @@
-fastapi
+fastapi[all]
 uvicorn[standard]
 httpx
 pandas
@@ -8,3 +8,6 @@ SQLAlchemy>=1.4
 asyncpg
 psycopg2-binary
 python-dotenv
+kafka-python
+python-jose
+passlib[bcrypt]
