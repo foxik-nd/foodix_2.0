@@ -93,6 +93,17 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+
+  producer:
+    platform: linux/amd64
+    image: python:3.12-slim
+    container_name: kafka-producer
+    depends_on:
+      - kafka
+    volumes:
+      - ./app:/app
+    command: >
+      bash -c "pip install --no-cache-dir kafka-python"
  
   kafka:
     platform: linux/amd64
