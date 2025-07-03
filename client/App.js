@@ -1,12 +1,16 @@
+import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import HomeScreen from './components/HomeScreen';
 import BarcodeScannerScreen from './components/BarcodeScannerScreen';
 import ComparaisonScreen from './components/ComparaisonScreen';
 import ComparaisonResultScreen from './components/ComparaisonResultScreen';
+import LoginScreen from './components/LoginScreen';
+import SignupScreen from './components/SignupScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab   = createBottomTabNavigator();
@@ -40,16 +44,28 @@ function MainTabs() {
 }
 
 export default function App() {
+  const [isAuth, setIsAuth] = useState(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem('token').then(token => {
+      setIsAuth(!!token);
+    });
+  }, []);
+
+  if (isAuth === null) return null; // ou un splash screen
+
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName="Main"
+        initialRouteName={isAuth ? 'Home' : 'Login'}
         screenOptions={{
           headerStyle: { backgroundColor: '#FF9100' },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
         }}
       >
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
 
         {}
@@ -65,6 +81,8 @@ export default function App() {
           component={ComparaisonResultScreen}
           options={{ title: 'Résultat de la comparaison', headerShown: true }}
         />
+
+        <Stack.Screen name="Signup" component={SignupScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
