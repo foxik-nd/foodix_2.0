@@ -10,6 +10,7 @@ import BarcodeScannerScreen from './components/BarcodeScannerScreen';
 import ComparaisonScreen from './components/ComparaisonScreen';
 import ComparaisonResultScreen from './components/ComparaisonResultScreen';
 import LoginScreen from './components/LoginScreen';
+import SignupScreen from './components/SignupScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab   = createBottomTabNavigator();
@@ -80,6 +81,8 @@ export default function App() {
           component={ComparaisonResultScreen}
           options={{ title: 'Résultat de la comparaison', headerShown: true }}
         />
+
+        <Stack.Screen name="Signup" component={SignupScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

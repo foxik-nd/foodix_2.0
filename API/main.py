@@ -17,6 +17,7 @@ from typing import Optional
 from sqlalchemy import Column, String, JSON, DateTime, func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.exc import IntegrityError
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -39,6 +40,12 @@ class Product(Base):
                           server_default=func.now(),
                           onupdate=func.now())
 
+class UserDB(Base):
+    __tablename__ = "users"
+    username = Column(String, primary_key=True, index=True)
+    full_name = Column(String)
+    hashed_password = Column(String)
+
 async def get_session():
     async with AsyncSessionLocal() as session:
         yield session
@@ -60,7 +67,6 @@ kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 kafka_topic = os.getenv("KAFKA_TOPIC", "products")
 producer = None
 
-# --- Auth config ---
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
@@ -68,41 +74,18 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-# --- User model (in-memory for demo) ---
-fake_users_db = {
-    "nicolas": {
-        "username": "nicolas",
-        "full_name": "Nicolas",
-        "hashed_password": pwd_context.hash("motdepasse"),
-    },
-    "nassim": {
-        "username": "nassim",
-        "full_name": "Nassim",
-        "hashed_password": pwd_context.hash("motdepasse"),
-    },
-}
-
-class User:
-    def __init__(self, username: str, full_name: str):
-        self.username = username
-        self.full_name = full_name
-
-class UserInDB(User):
-    def __init__(self, username: str, full_name: str, hashed_password: str):
-        super().__init__(username, full_name)
-        self.hashed_password = hashed_password
+async def get_user_db(session, username: str):
+    user = await session.get(UserDB, username)
+    return user
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-def get_user(db, username: str) -> Optional[UserInDB]:
-    user = db.get(username)
-    if user:
-        return UserInDB(**user)
-    return None
+def get_password_hash(password):
+    return pwd_context.hash(password)
 
-def authenticate_user(username: str, password: str):
-    user = get_user(fake_users_db, username)
+async def authenticate_user_db(session, username: str, password: str):
+    user = await get_user_db(session, username)
     if not user or not verify_password(password, user.hashed_password):
         return None
     return user
@@ -114,7 +97,7 @@ def create_access_token(data: dict, expires_delta=None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+async def get_current_user(token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -127,7 +110,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    user = get_user(fake_users_db, username)
+    user = await get_user_db(session, username)
     if user is None:
         raise credentials_exception
     return user
@@ -159,7 +142,7 @@ def send_product_to_kafka(product_data):
 async def get_product(
     barcode: str,
     essential: bool = Query(False),
-    current_user: User = Depends(get_current_user),
+    current_user: UserDB = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
     persisted = await session.get(Product, barcode)
@@ -245,9 +228,26 @@ async def get_recommendation(product_name: str = Query(...)):
     score = float(sims[idx])
     return {"recommendation": item, "similarity": score}
 
+@app.post("/signup", status_code=201)
+async def signup(
+    username: str = Query(...),
+    full_name: str = Query(...),
+    password: str = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    hashed_password = get_password_hash(password)
+    user = UserDB(username=username, full_name=full_name, hashed_password=hashed_password)
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(409, "Nom d'utilisateur déjà pris")
+    return {"username": username, "status": "created"}
+
 @app.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(form_data.username, form_data.password)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: AsyncSession = Depends(get_session)):
+    user = await authenticate_user_db(session, form_data.username, form_data.password)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     access_token = create_access_token(data={"sub": user.username})

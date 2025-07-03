@@ -1,29 +1,27 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function LoginScreen({ navigation }) {
+export default function SignupScreen({ navigation }) {
   const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async () => {
+  const handleSignup = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/login', {
+      const response = await fetch('http://localhost:8000/signup?username=' + encodeURIComponent(username) + '&full_name=' + encodeURIComponent(fullName) + '&password=' + encodeURIComponent(password), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
       });
       const data = await response.json();
-      if (response.ok && data.access_token) {
-        await AsyncStorage.setItem('token', data.access_token);
-        navigation.replace('Home');
+      if (response.ok) {
+        Alert.alert('Succès', 'Compte créé, connectez-vous !');
+        navigation.replace('Login');
       } else {
-        Alert.alert('Erreur', data.detail || 'Login échoué');
+        Alert.alert('Erreur', data.detail || 'Inscription échouée');
       }
     } catch (e) {
-      Alert.alert('Erreur', 'Impossible de se connecter au serveur');
+      Alert.alert('Erreur', 'Impossible de contacter le serveur');
     } finally {
       setLoading(false);
     }
@@ -31,7 +29,7 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Connexion</Text>
+      <Text style={styles.title}>Inscription</Text>
       <TextInput
         style={styles.input}
         placeholder="Nom d'utilisateur"
@@ -41,13 +39,19 @@ export default function LoginScreen({ navigation }) {
       />
       <TextInput
         style={styles.input}
+        placeholder="Nom complet"
+        value={fullName}
+        onChangeText={setFullName}
+      />
+      <TextInput
+        style={styles.input}
         placeholder="Mot de passe"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
       />
-      <Button title={loading ? 'Connexion...' : 'Se connecter'} onPress={handleLogin} disabled={loading} />
-      <Button title="Créer un compte" onPress={() => navigation.replace('Signup')} />
+      <Button title={loading ? 'Inscription...' : "S'inscrire"} onPress={handleSignup} disabled={loading} />
+      <Button title="Déjà un compte ? Se connecter" onPress={() => navigation.replace('Login')} />
     </View>
   );
 }
