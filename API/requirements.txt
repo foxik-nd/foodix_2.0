@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+httpx
+pandas
+scipy
+scikit-learn
+SQLAlchemy>=1.4
+asyncpg
+psycopg2-binary
+python-dotenv
