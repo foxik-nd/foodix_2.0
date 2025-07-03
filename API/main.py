@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.exc import IntegrityError
 
+from hdfs import InsecureClient
+import json as pyjson
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@db:5432/products_db"
@@ -74,9 +77,32 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-async def get_user_db(session, username: str):
-    user = await session.get(UserDB, username)
-    return user
+# Config HDFS
+HDFS_URL = os.getenv("HDFS_URL", "http://namenode:9870")
+HDFS_USER = os.getenv("HDFS_USER", "hdfs")
+HDFS_USERS_PATH = "/users/users.json"
+HDFS_PRODUCTS_PATH = "/products/products.json"
+HDFS_LOGS_PATH = "/logs/user_events.json"
+hdfs_client = InsecureClient(HDFS_URL, user=HDFS_USER)
+
+# --- Gestion utilisateurs sur HDFS ---
+def read_users_from_hdfs():
+    try:
+        with hdfs_client.read(HDFS_USERS_PATH) as reader:
+            return pyjson.load(reader)
+    except Exception:
+        return []
+
+def write_users_to_hdfs(users):
+    with hdfs_client.write(HDFS_USERS_PATH, overwrite=True, encoding='utf-8') as writer:
+        pyjson.dump(users, writer)
+
+def get_user_hdfs(username):
+    users = read_users_from_hdfs()
+    for user in users:
+        if user['username'] == username:
+            return user
+    return None
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -84,9 +110,9 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-async def authenticate_user_db(session, username: str, password: str):
-    user = await get_user_db(session, username)
-    if not user or not verify_password(password, user.hashed_password):
+def authenticate_user_hdfs(username, password):
+    user = get_user_hdfs(username)
+    if not user or not verify_password(password, user['hashed_password']):
         return None
     return user
 
@@ -97,7 +123,7 @@ def create_access_token(data: dict, expires_delta=None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)):
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -110,10 +136,46 @@ async def get_current_user(token: str = Depends(oauth2_scheme), session: AsyncSe
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    user = await get_user_db(session, username)
+    user = get_user_hdfs(username)
     if user is None:
         raise credentials_exception
     return user
+
+# --- Gestion produits sur HDFS ---
+def read_products_from_hdfs():
+    try:
+        with hdfs_client.read(HDFS_PRODUCTS_PATH) as reader:
+            return pyjson.load(reader)
+    except Exception:
+        return []
+
+def write_products_to_hdfs(products):
+    with hdfs_client.write(HDFS_PRODUCTS_PATH, overwrite=True, encoding='utf-8') as writer:
+        pyjson.dump(products, writer)
+
+def get_product_hdfs(barcode):
+    products = read_products_from_hdfs()
+    for prod in products:
+        if prod['barcode'] == barcode:
+            return prod
+    return None
+
+def add_product_hdfs(product):
+    products = read_products_from_hdfs()
+    products.append(product)
+    write_products_to_hdfs(products)
+
+# --- Gestion logs sur HDFS ---
+def append_log_to_hdfs(log):
+    try:
+        logs = []
+        with hdfs_client.read(HDFS_LOGS_PATH) as reader:
+            logs = pyjson.load(reader)
+    except Exception:
+        logs = []
+    logs.append(log)
+    with hdfs_client.write(HDFS_LOGS_PATH, overwrite=True, encoding='utf-8') as writer:
+        pyjson.dump(logs, writer)
 
 @app.on_event("startup")
 async def on_startup():
@@ -142,13 +204,12 @@ def send_product_to_kafka(product_data):
 async def get_product(
     barcode: str,
     essential: bool = Query(False),
-    current_user: UserDB = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
+    current_user = Depends(get_current_user)
 ):
-    persisted = await session.get(Product, barcode)
-    if persisted:
-        data = persisted.data
-        logger.info(f"[DB] produit {barcode} trouvé en base")
+    prod = get_product_hdfs(barcode)
+    if prod:
+        data = prod['data']
+        logger.info(f"[HDFS] produit {barcode} trouvé sur HDFS")
     else:
         url = f"https://world.openfoodfacts.net/api/v2/product/{barcode}.json"
         async with httpx.AsyncClient() as client:
@@ -157,53 +218,50 @@ async def get_product(
                 raise HTTPException(404, "Produit non trouvé")
             resp.raise_for_status()
             data = resp.json()
-        prod = Product(barcode=barcode, data=data)
-        session.add(prod)
-        await session.commit()
-        logger.info(f"[API→DB] produit {barcode} récupéré et stocké")
+        add_product_hdfs({"barcode": barcode, "data": data})
+        logger.info(f"[API→HDFS] produit {barcode} récupéré et stocké sur HDFS")
+    # Log d'événement utilisateur sur HDFS
     user_event = {
         "event": "product_view",
-        "user_id": current_user.username,
+        "user_id": current_user['username'],
         "barcode": barcode,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+    append_log_to_hdfs(user_event)
     send_product_to_kafka(user_event)
     send_product_to_kafka(data)
-
     if essential:
-        prod = data.get("product", {})
-        nutr = prod.get("nutriments", {})
+        prod_data = data.get("product", {})
+        nutr = prod_data.get("nutriments", {})
         return {
-            "product_name": prod.get("product_name", "N/A"),
-            "image_url": prod.get("image_url"),
+            "product_name": prod_data.get("product_name", "N/A"),
+            "image_url": prod_data.get("image_url"),
             "nutriscore": {
-                "grade": prod.get("nutriscore_grade", "N/A"),
-                "score": prod.get("nutriscore_score", "N/A"),
+                "grade": prod_data.get("nutriscore_grade", "N/A"),
+                "score": prod_data.get("nutriscore_score", "N/A"),
             },
             "ecoscore": {
-                "grade": prod.get("ecoscore_grade", "N/A"),
-                "score": prod.get("ecoscore_score", "N/A"),
+                "grade": prod_data.get("ecoscore_grade", "N/A"),
+                "score": prod_data.get("ecoscore_score", "N/A"),
             },
-            "nova_group": prod.get("nova_group", "N/A"),
+            "nova_group": prod_data.get("nova_group", "N/A"),
             "health_risks": {
                 "fat": nutr.get("fat", "N/A"),
                 "saturated_fat": nutr.get("saturated-fat", "N/A"),
                 "sugars": nutr.get("sugars", "N/A"),
                 "salt": nutr.get("salt", "N/A"),
-                "palm_oil": "en:palm-oil" in prod.get("ingredients_analysis_tags", []),
-                "additives": prod.get("additives_tags", []),
-                "allergens": prod.get("allergens_tags", []),
+                "palm_oil": "en:palm-oil" in prod_data.get("ingredients_analysis_tags", []),
+                "additives": prod_data.get("additives_tags", []),
+                "allergens": prod_data.get("allergens_tags", []),
             }
         }
-
     return data
 
 @app.post("/products/", status_code=201)
 async def add_product(
-    barcode: str = Query(..., description="Code-barres du produit à ajouter"),
-    session: AsyncSession = Depends(get_session)
+    barcode: str = Query(..., description="Code-barres du produit à ajouter")
 ):
-    if await session.get(Product, barcode):
+    if get_product_hdfs(barcode):
         raise HTTPException(409, "Produit déjà existant")
     url = f"https://world.openfoodfacts.net/api/v2/product/{barcode}.json"
     async with httpx.AsyncClient() as client:
@@ -212,11 +270,8 @@ async def add_product(
             raise HTTPException(404, "Produit non trouvé")
         resp.raise_for_status()
         data = resp.json()
-    prod = Product(barcode=barcode, data=data)
-    session.add(prod)
-    await session.commit()
-    logger.info(f"[POST] produit {barcode} ajouté en base")
-    send_product_to_kafka(data)
+    add_product_hdfs({"barcode": barcode, "data": data})
+    logger.info(f"[POST→HDFS] produit {barcode} ajouté sur HDFS")
     return {"barcode": barcode, "status": "added"}
 
 @app.get("/recommendation/")
@@ -232,23 +287,20 @@ async def get_recommendation(product_name: str = Query(...)):
 async def signup(
     username: str = Query(...),
     full_name: str = Query(...),
-    password: str = Query(...),
-    session: AsyncSession = Depends(get_session)
+    password: str = Query(...)
 ):
-    hashed_password = get_password_hash(password)
-    user = UserDB(username=username, full_name=full_name, hashed_password=hashed_password)
-    session.add(user)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
+    users = read_users_from_hdfs()
+    if any(u['username'] == username for u in users):
         raise HTTPException(409, "Nom d'utilisateur déjà pris")
+    hashed_password = get_password_hash(password)
+    users.append({"username": username, "full_name": full_name, "hashed_password": hashed_password})
+    write_users_to_hdfs(users)
     return {"username": username, "status": "created"}
 
 @app.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: AsyncSession = Depends(get_session)):
-    user = await authenticate_user_db(session, form_data.username, form_data.password)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user_hdfs(form_data.username, form_data.password)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
-    access_token = create_access_token(data={"sub": user.username})
+    access_token = create_access_token(data={"sub": user['username']})
     return {"access_token": access_token, "token_type": "bearer"}
