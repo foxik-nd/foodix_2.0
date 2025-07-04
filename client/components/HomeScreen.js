@@ -13,6 +13,7 @@ import axios from 'axios';
 import { API_BASE_URL } from '../config';
 import { commonStyles } from '../styles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BarChart } from 'react-native-chart-kit';
 
 export default function HomeScreen({ navigation, route }) {
   const code = route?.params?.code;
@@ -133,6 +134,23 @@ export default function HomeScreen({ navigation, route }) {
       )}
 
       <Button title="Se déconnecter" onPress={handleLogout} />
+
+      <BarChart
+        data={{
+          labels: ['yanis', 'nico'],
+          datasets: [{ data: [182, 15] }]
+        }}
+        width={320}
+        height={220}
+        yAxisLabel=""
+        chartConfig={{
+          backgroundColor: '#fff',
+          backgroundGradientFrom: '#fff',
+          backgroundGradientTo: '#fff',
+          decimalPlaces: 0,
+          color: (opacity = 1) => `rgba(44, 62, 80, ${opacity})`,
+        }}
+      />
     </ScrollView>
   );
 }
