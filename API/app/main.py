@@ -15,6 +15,8 @@ import pickle
 from scipy import sparse
 from kafka import KafkaProducer
 import json as pyjson
+from fastapi import APIRouter
+import glob
 
 # ────── CONFIGURATION ENV ──────
 HDFS_URL = os.getenv("HDFS_URL", "http://namenode:9870")
@@ -83,6 +85,7 @@ def create_access_token(data: dict, expires_delta=None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
+    print("TOKEN REÇU:", token)
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials",
@@ -253,3 +256,27 @@ async def get_recommendation(product_name: str = Query(...)):
     item = green_df.iloc[idx].to_dict()
     score = float(sims[idx])
     return {"recommendation": item, "similarity": score}
+
+router = APIRouter()
+
+@router.get("/meals/{username}")
+def get_meals(username: str):
+    # Adapte le chemin selon ton montage HDFS ou copie locale
+    files = glob.glob(f"/path/to/mounted/hdfs/summary/{username}_meals/part-*.json")
+    meals = []
+    for file in files:
+        with open(file) as f:
+            for line in f:
+                meals.append(json.loads(line))
+    return meals
+
+@router.get("/stats/scans_by_user")
+def get_scans_by_user():
+    # Adapte le chemin selon ton montage HDFS ou copie locale
+    files = glob.glob("/path/to/mounted/hdfs/summary/scans_by_user/part-*.json")
+    stats = []
+    for file in files:
+        with open(file) as f:
+            for line in f:
+                stats.append(json.loads(line))
+    return stats
