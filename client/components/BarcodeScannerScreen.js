@@ -1,32 +1,63 @@
 import { useCameraPermissions, CameraView } from 'expo-camera';
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { commonStyles } from '../styles';
+import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from '../config';
+import { commonStyles } from '../styles';
 
 export default function BarcodeScannerScreen({ navigation, route }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
 
   const targetSlot = route.params?.target;
-  const returnTo   = route.params?.returnTo; 
+  const returnTo = route.params?.returnTo;
 
   const codesRef = useRef({
     code1: route.params?.code1 ?? null,
     code2: route.params?.code2 ?? null,
   });
+  
 
   useEffect(() => {
     if (!permission) return;
     if (!permission.granted) requestPermission();
   }, [permission]);
 
-  const handleBarcodeScanned = ({ data }) => {
+  const fetchProduct = async (barcode) => {
+    const token = await AsyncStorage.getItem('token');
+    console.log("TOKEN STOCKÉ :", token);
+    if (!token) throw new Error('Token manquant');
+
+    const response = await fetch(`${API_BASE_URL}/product/${barcode}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erreur API (${response.status})`);
+    }
+
+    return response.json();
+  };
+
+  const handleBarcodeScanned = async ({ data }) => {
     if (scanned) return;
     setScanned(true);
 
     if (targetSlot === 1) codesRef.current.code1 = data;
     if (targetSlot === 2) codesRef.current.code2 = data;
+
+    try {
+      const product = await fetchProduct(data);
+      console.log('Produit reçu :', product);
+      // Tu peux ici stocker les infos du produit ou les passer à l’écran suivant si nécessaire
+    } catch (error) {
+      console.error('Erreur API :', error);
+      Alert.alert('Erreur', 'Impossible de récupérer les infos du produit (authentification requise ?)');
+      navigation.replace('Login'); // Optionnel : redirection si 401
+      return;
+    }
 
     setTimeout(() => {
       if (returnTo === 'Comparaison') {
@@ -46,16 +77,6 @@ export default function BarcodeScannerScreen({ navigation, route }) {
     }, 500);
   };
 
-  const fetchProduct = async (barcode) => {
-    const token = await AsyncStorage.getItem('token');
-    const response = await fetch(`http://localhost:8000/product/${barcode}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    return response.json();
-  };
-
   if (!permission) return <View />;
   if (!permission.granted) {
     return (
@@ -69,7 +90,7 @@ export default function BarcodeScannerScreen({ navigation, route }) {
     <View style={styles.cameraContainer}>
       <CameraView
         style={StyleSheet.absoluteFill}
-        onBarcodeScanned={handleBarcodeScanned}
+        onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
         barcodeScannerSettings={{
           barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e'],
         }}

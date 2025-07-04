@@ -25,9 +25,17 @@ export default function HomeScreen({ navigation, route }) {
     const fetchProduct = async () => {
       try {
         setLoading(true);
-        const response = await axios.get(`${API_BASE_URL}/product/${code}`, {
-          params: { essential: true, with_reco: true },
-        });
+        const token = await AsyncStorage.getItem('token');
+        if (!token) throw new Error('Token manquant');
+        const response = await axios.get(
+          `${API_BASE_URL}/product/${code}`,
+          {
+            params: { essential: true, with_reco: true },
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          }
+        );
         setProduct(response.data);
       } catch (error) {
         console.error('Erreur API:', error);
